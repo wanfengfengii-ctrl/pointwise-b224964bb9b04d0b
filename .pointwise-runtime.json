@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "kind": "api",
+  "setup": [],
+  "start": ["sh", "-c", "case \"$1\" in 127.0.0.1|localhost) exec python3 -B -m takes.workbench --database studio.sqlite --port \"$2\" ;; *) exit 2 ;; esac", "workbench", "${POINTWISE_HOST}", "${POINTWISE_PORT}"],
+  "readiness_path": "/masters",
+  "verify": ["python3", "-B", "check_project.py"],
+  "demo": ["python3", "-B", "-m", "unittest", "tests.test_workday.WorkdayTests.test_workday"]
+}

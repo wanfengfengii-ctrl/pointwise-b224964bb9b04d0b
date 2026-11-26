@@ -1,0 +1,13 @@
+{
+  "scene": "bridge-letter-2",
+  "dialogue": {"source": "演员底音 B02", "sample_rate": 48000, "frames": [10, 20, 30, 40]},
+  "bed": {"source": "桥边环境 B02", "sample_rate": 48000, "frames": [1, 2, 3, 4]},
+  "take_window": [1, 3],
+  "returned": [70, 80],
+  "move_dialogue_to": 2,
+  "expected": {
+    "preview": [11, 22, 33, 44],
+    "master": [11, 72, 83, 44],
+    "next_preview": [1, 2, 13, 24, 30, 40]
+  }
+}
