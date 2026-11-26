@@ -2,9 +2,13 @@
 import sys
 import unittest
 
+import recut_walkthrough
+
 
 def main():
-    suite = unittest.defaultTestLoader.discover('tests', top_level_dir='.')
+    loader = unittest.defaultTestLoader
+    suite = loader.discover('tests', top_level_dir='.')
+    suite.addTests(loader.loadTestsFromModule(recut_walkthrough))
     if suite.countTestCases():
         result = unittest.TextTestRunner(verbosity=2).run(suite)
     else:

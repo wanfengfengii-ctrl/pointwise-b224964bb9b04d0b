@@ -15,6 +15,11 @@ from masters.playback import listen_master
 from media.catalog import get_asset, register_asset
 from media.repository import initialize_assets
 from mix.preview import preview_revision
+from recuts.service import (
+    listen_recut_master, open_recut, preview_recut, publish_recut, submit_recut_edits,
+)
+from recuts.splices import RecutConflict
+from recuts.storage import get_draft, initialize_recuts
 from takes.apply import apply_take
 from takes.assignments import Assignment, TakeConflict, get_assignment, initialize_assignments, issue_take
 from takes.returns import accept_return, get_receipt, initialize_receipts
@@ -35,6 +40,7 @@ def initialize_workspace(database: str | PathLike[str]) -> None:
         initialize_masters(db)
         initialize_assignments(db)
         initialize_receipts(db)
+        initialize_recuts(db)
 
 
 def dispatch_json(db: sqlite3.Connection, method: str, path: str,
@@ -76,6 +82,35 @@ def _post(db: sqlite3.Connection, route: str, body: object) -> tuple[int, dict]:
             result = apply_take(db, *_fields(body, 'take_id'))
             return 201, {'master_id': result.master_id, **asdict(result.manifest)}
         case _:
+            if route == '/recuts':
+                draft, version = open_recut(db, *_fields(body, 'master_id'))
+                return 201, {
+                    'recut_id': draft.recut_id,
+                    'original_master_id': draft.original_master_id,
+                    'version_id': version.version_id,
+                }
+            parts = route.split('/')
+            if (len(parts) == 3 and parts[0] == '' and parts[1] == 'recuts'
+                    and parts[2].isascii() and parts[2].isdecimal() and int(parts[2]) > 0):
+                raise KeyError('use a recut sub-resource')
+            if len(parts) == 4 and parts[0] == '' and parts[1] == 'recuts' and parts[3] in (
+                'edits', 'preview', 'publish',
+            ):
+                recut_id = _path_id(parts[2])
+                get_draft(db, recut_id)
+                match parts[3]:
+                    case 'edits':
+                        version = submit_recut_edits(
+                            db, recut_id, *_fields(body, 'parent_version_id', 'instructions'),
+                        )
+                        return 201, {
+                            'version_id': version.version_id,
+                            'placements': [_recut_placement_view(item) for item in version.layout.placements],
+                        }
+                    case 'preview':
+                        return 200, preview_recut(db, recut_id, *_fields(body, 'version_id'))
+                    case 'publish':
+                        return 201, {'master_id': publish_recut(db, recut_id, *_fields(body, 'version_id'))}
             raise KeyError('unknown route')
 
 
@@ -92,11 +127,17 @@ def _get(db: sqlite3.Connection, route: str) -> dict:
         if head is None:
             raise KeyError('unknown scene')
         return asdict(head)
+    if collection == 'recuts':
+        recut_id = _path_id(key)
+        draft = get_draft(db, recut_id)
+        return {
+            'recut_id': draft.recut_id,
+            'original_master_id': draft.original_master_id,
+            'version_id': draft.head_version_id,
+        }
     if collection not in ('assets', 'revisions', 'takes', 'masters'):
         raise KeyError('unknown route')
-    if not key.isascii() or not key.isdecimal() or int(key) <= 0:
-        raise ValueError('path identifier must be a positive integer')
-    identifier = int(key)
+    identifier = _path_id(key)
 
     match collection:
         case 'assets':
@@ -113,7 +154,25 @@ def _get(db: sqlite3.Connection, route: str) -> dict:
                     'receipt': None if receipt is None else asdict(receipt),
                 }
         case 'masters':
+            recut_master = listen_recut_master(db, identifier)
+            if recut_master is not None:
+                return recut_master
             return listen_master(db, identifier)
+
+
+def _path_id(key: str) -> int:
+    if not key.isascii() or not key.isdecimal() or int(key) <= 0:
+        raise ValueError('path identifier must be a positive integer')
+    return int(key)
+
+
+def _recut_placement_view(placement) -> dict:
+    return {
+        'occurrence_id': placement.occurrence_id, 'track': placement.track,
+        'asset_id': placement.asset_id, 'source_start': placement.source_start,
+        'source_end': placement.source_end, 'start': placement.start,
+        'end': placement.end,
+    }
 
 
 def _revision_view(revision: Revision) -> dict:
@@ -157,7 +216,7 @@ def serve_workbench(database: str | PathLike[str], port: int = 0, *,
                 status, result = 400, {'error': 'invalid_request', 'message': str(exc)}
             except KeyError as exc:
                 status, result = 404, {'error': 'not_found', 'message': str(exc.args[0])}
-            except (RevisionConflict, TakeConflict) as exc:
+            except (RevisionConflict, TakeConflict, RecutConflict) as exc:
                 status, result = 409, {'error': 'conflict', 'message': str(exc)}
             except sqlite3.Error:
                 status, result = 500, {'error': 'storage_failure', 'message': 'database operation failed'}
